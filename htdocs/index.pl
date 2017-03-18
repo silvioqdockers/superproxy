@@ -76,10 +76,6 @@ sub  do_debug_request()
     if( $ENV{HTTP_MYPROXY_DEBUG} )
     {
         print "\n----- $status-\n";
-        for ( @chuncks )
-        {
-            print " RESP> " . $_ . "\n";
-        }
         
         for ( @{&build_headers} )
         {
@@ -91,6 +87,10 @@ sub  do_debug_request()
             print " ENV> $_ = $ENV{$_}\n";
         }
         
+        for ( @chuncks )
+        {
+            print " RESP> " . $_ . "\n";
+        }
         
         print  "----- FIN";
         return 1;
@@ -105,9 +105,16 @@ sub  get_scheme
     return DEFAULT_SCHEME;
 }
 
-sub  do_proxy( $$ )
+sub  get_rawpostdata()
 {
-    my ($q,$uri) = @_;
+    my $data;
+    read(STDIN, $data, $ENV{'CONTENT_LENGTH'});
+    return $data;
+}
+
+sub  do_proxy( $$$ )
+{
+    my ($q,$uri, $rawdata) = @_;
     
     my $curl = WWW::Curl::Easy->new;
     my $retcode;
@@ -115,6 +122,9 @@ sub  do_proxy( $$ )
     
     $curl->setopt(CURLOPT_URL, $uri );
     $curl->setopt(CURLOPT_HEADER, 0 );
+    $curl->setopt(CURLOPT_CUSTOMREQUEST, $ENV{"REQUEST_METHOD"} ) if $ENV{"REQUEST_METHOD"} ;
+    
+    $curl->setopt(CURLOPT_POSTFIELDS, $rawdata ) if $rawdata;
     $curl->setopt(CURLOPT_HEADERFUNCTION, \&write_callback);
     $curl->setopt(CURLOPT_HTTPHEADER, &build_headers );
     $curl->setopt(CURLOPT_WRITEDATA,\$response_body);
@@ -141,6 +151,7 @@ sub  do_proxy( $$ )
             next unless $_;
             my ( $key, $val ) = split /: /, $_, 2;
             next if $response_code != 200 && lc( $key ) eq "content-length";
+            next if $ENV{HTTP_MYPROXY_DEBUG} && lc( $key ) eq "content-length";
             next if lc( $key ) eq "transfer-encoding";
             $val = get_scheme . $ENV{HTTP_HOST} . "/" . $val if lc( $key ) eq "location";
             $headers{"-".$key} = $val;
@@ -149,7 +160,6 @@ sub  do_proxy( $$ )
         print  $q->header( %headers );
         
         print $response_body if( do_debug_request() || $response_code == 200 );
-        
     }
     else
     {
@@ -164,9 +174,8 @@ sub  do_proxy( $$ )
     }
 }
 
+my $raw = get_rawpostdata;
 my $q = CGI->new;
-
-
 
 my $uri = $q->param( 'uri' );
 $uri = $q->url_param( 'uri' ) if( !$uri );
@@ -174,7 +183,7 @@ $uri = $ENV{REQUEST_URI} if( !$uri );
 
 if( $uri && $uri =~ /^\/?https?:\/\// ){
     $uri =~ s/^\///;
-    do_proxy( $q, $uri )
+    do_proxy( $q, $uri, $raw )
 }
 else
 {
